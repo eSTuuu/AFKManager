@@ -6,33 +6,36 @@ using CounterStrikeSharp.API.Modules.Commands;
 using CounterStrikeSharp.API.Modules.Memory;
 using CounterStrikeSharp.API.Modules.Timers;
 using CounterStrikeSharp.API.Modules.Utils;
+using System.Text.Json.Serialization;
 
 namespace AFKManager;
 
 public class AFKManagerConfig : BasePluginConfig
 {
-    public int AfkPunishAfterWarnings { get; set; } = 3;
-    public int AfkPunishment { get; set; } = 1;
-    public float AfkWarnInterval { get; set; } = 5.0f;
+    public float AfkMarkTime { get; set; } = 20.0f;
+    public float AfkKickTime { get; set; } = 10.0f;
     public int AfkTransferC4AfterWarnings { get; set; } = 1;
     public bool AfkTransferC4OnlyFromBuyZone { get; set; } = true;
-    public float SpecWarnInterval { get; set; } = 20.0f;
-    public int SpecKickAfterWarnings { get; set; } = 5;
-    public int SpecKickMinPlayers { get; set; } = 5;
+    public float SpecWarnInterval { get; set; } = 30.0f;
+    public float SpecKickTime { get; set; } = 10.0f;
+    public int SpecKickMinPlayers { get; set; } = 1;
     public bool SpecKickOnlyMovedByPlugin { get; set; } = false;
     public List<string> SpecSkipFlag { get; set; } = [..new[] { "@css/root", "@css/ban" }];
     public List<string> AfkSkipFlag { get; set; } = [..new[] { "@css/root", "@css/ban" }];
     public List<string> AntiCampSkipFlag { get; set; } = [..new[] { "@css/root", "@css/ban" }];
-    public string PlaySoundName { get; set; } = "ui/panorama/popup_reveal_01";
-    public bool SkipWarmup { get; set; } = false;
+    public string PlaySoundName { get; set; } = "";
+    public bool SkipWarmup { get; set; } = true;
     public float AntiCampRadius { get; set; } = 130.0f;
     public int AntiCampPunishment { get; set; } = 1;
     public int AntiCampSlapDamage { get; set; } = 0;
-    public float AntiCampWarnInterval { get; set; } = 10.0f;
-    public int AntiCampPunishAfterWarnings { get; set; } = 3;
+    public float AntiCampMarkTime { get; set; } = 15.0f;
+    public float AntiCampPunishTime { get; set; } = 10.0f;
+    public bool AntiCampPunishmentAnnounce { get; set; } = false;
     public bool AntiCampSkipBombPlanted { get; set; } = true;
     public int AntiCampSkipTeam { get; set; } = 3;
     public float Timer { get; set; } = 5.0f;
+    [JsonPropertyName("ConfigVersion")]
+    public override int Version { get; set; } = 2;
 }
 
 public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
@@ -40,20 +43,20 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
     #region definitions
     public override string ModuleAuthor => "NiGHT & K4ryuu (forked by Глеб Хлебов)";
     public override string ModuleName => "AFK Manager";
-    public override string ModuleVersion => "0.2.8";
-    
-    public required AFKManagerConfig Config { get; set; }
+    public override string ModuleVersion => "0.4.0";
+
+    public required AFKManagerConfig Config { get; set; } = new();
     private CCSGameRules? _gGameRulesProxy;
+    private CounterStrikeSharp.API.Modules.Timers.Timer? _checkTimer;
     
     public void OnConfigParsed(AFKManagerConfig config)
     {
-        Config = config;
-
-        if (Config.AfkPunishment is < 0 or > 2)
+        if(Config.Version != config.Version)
         {
-            Config.AfkPunishment = 1;
-            Console.WriteLine($"{ModuleName}: AFKPunishment value is invalid, setting to default value (1).");
+            Console.WriteLine($"{ModuleName}: Config version mismatch. Update Config.");
         }
+
+        Config = config;
 
         if(Config.Timer < 0.1f)
         {                 
@@ -61,25 +64,57 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             Console.WriteLine($"{ModuleName}: Timer value is invalid, setting to default value (5.0).");
         }
 
-        if (Config.SpecWarnInterval < Config.Timer)
+        if (Config.AfkKickTime < 0)
+            Config.AfkKickTime = 0;
+
+        if (Config.AfkKickTime > 0 && Config.AfkMarkTime < Config.Timer)
         {
-            Config.SpecWarnInterval = Config.Timer;
-            Console.WriteLine($"{ModuleName}: The value of SpecWarnInterval is less than the value of Timer, SpecWarnInterval will be forced to {Config.Timer}");
+            Config.AfkMarkTime = Config.Timer;
+            Console.WriteLine($"{ModuleName}: AfkMarkTime is less than Timer, AfkMarkTime will be forced to {Config.Timer}");
         }
-        
-        if(Config.AntiCampWarnInterval < Config.Timer)
-        {
-            Config.AntiCampWarnInterval = Config.Timer;
-            Console.WriteLine($"{ModuleName}: The value of AntiCampWarnInterval is less than the value of Timer, AntiCampWarnInterval will be forced to {Config.Timer}");
-        }
-        
+
         if (Config.AntiCampPunishment is < 0 or > 1)
         {
-            Config.AfkPunishment = 1;
+            Config.AntiCampPunishment = 1;
             Console.WriteLine($"{ModuleName}: AntiCampPunishment value is invalid, setting to default value (1).");
         }
+
+        if (Config.AntiCampSlapDamage < 0)
+            Config.AntiCampSlapDamage = 0;
+
+        if (Config.AntiCampPunishTime < 0)
+            Config.AntiCampPunishTime = 0;
+
+        if (Config.AntiCampPunishTime > 0 && Config.AntiCampMarkTime < Config.Timer)
+        {
+            Config.AntiCampMarkTime = Config.Timer;
+            Console.WriteLine($"{ModuleName}: AntiCampMarkTime is less than Timer, AntiCampMarkTime will be forced to {Config.Timer}");
+        }
+
+        if (Config.SpecKickTime < 0)
+            Config.SpecKickTime = 0;
+
+        if (Config.SpecKickTime > 0 && Config.SpecWarnInterval < Config.Timer)
+        {
+            Config.SpecWarnInterval = Config.Timer;
+            Console.WriteLine($"{ModuleName}: SpecWarnInterval is less than Timer, SpecWarnInterval will be forced to {Config.Timer}");
+        }
         
-        AddTimer(Config.Timer, AfkTimer_Callback, TimerFlags.REPEAT);
+        StartCheckTimer();
+    }
+
+    public override void Unload(bool hotReload)
+    {
+        _checkTimer?.Kill();
+        _checkTimer = null;
+        _gPlayerInfo.Clear();
+        _gGameRulesProxy = null;
+    }
+
+    private void StartCheckTimer()
+    {
+        _checkTimer?.Kill();
+        _checkTimer = AddTimer(Config.Timer, AfkTimer_Callback, TimerFlags.REPEAT);
     }
     
     private class PlayerInfo
@@ -87,12 +122,13 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
         public QAngle? Angles { get; set; }
         public Vector? Origin { get; set; }
         public float AfkTime { get; set; }
-        public int AfkWarningCount { get; set; }
-        public int SpecWarningCount { get; set; }
+        public bool AfkMarked { get; set; }
+        public bool SpecMarked { get; set; }
         public float SpecAfkTime { get; set; }
         public bool MovedByPlugin { get; set; }
         public float AntiCampTime { get; set; }
-        public int AntiCampWarningCount { get; set; }
+        public bool AntiCampMarked { get; set; }
+        public Vector? AntiCampAnchor { get; set; }
     }
     
     private readonly Dictionary<uint, PlayerInfo> _gPlayerInfo = new();
@@ -102,18 +138,13 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
     {
         RegisterListener<Listeners.OnMapStart>(_ =>
         {
-            Server.NextFrame(() =>
-            {
-                _gGameRulesProxy =
-                    Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First().GameRules ??
-                    throw new Exception("Failed to find game rules proxy entity.");
-            });
-            
+            Server.NextFrame(RefreshGameRules);
         });
         
         RegisterListener<Listeners.OnMapEnd>(() =>
         {
             _gPlayerInfo.Clear();
+            _gGameRulesProxy = null;
         });
         
         #region OnClientConnected
@@ -135,33 +166,12 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             _gPlayerInfo.Remove((uint)playerSlot + 1);
         });
         #endregion
-        #region hotReload
-        if (hotReload)
+        Server.NextFrame(() =>
         {
-            AddTimer(1.0f, () =>
-            {
-                var players = Utilities.GetPlayers().Where(x => x is { IsBot: false, Connected: PlayerConnectedState.PlayerConnected });
+            RefreshRuntimeState();
+            StartCheckTimer();
+        });
 
-                foreach (var player in players)
-                {
-                    var i = player.Index;
-                    
-                    if (!_gPlayerInfo.ContainsKey(i))
-                    {
-                        _gPlayerInfo.Add(i, new PlayerInfo
-                        {
-                            Angles = new QAngle(),
-                            Origin = new Vector()
-                        });
-                    }
-                }
-                
-                _gGameRulesProxy =
-                    Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules").First().GameRules ??
-                        throw new Exception("Failed to find game rules proxy entity on hotReload.");
-            }, TimerFlags.STOP_ON_MAPCHANGE);
-        }
-        #endregion
         AddCommandListener("spec_mode", OnCommandListener);
         AddCommandListener("spec_next", OnCommandListener);
     }
@@ -175,8 +185,9 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             return HookResult.Continue;
         
         data.SpecAfkTime = 0;
-        data.SpecWarningCount = 0;
-        data.AfkWarningCount = 0;
+        data.SpecMarked = false;
+        data.AfkTime = 0;
+        data.AfkMarked = false;
         
         return HookResult.Continue;
     }
@@ -192,8 +203,9 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             return HookResult.Continue;
         
         value.SpecAfkTime = 0;
-        value.SpecWarningCount = 0;
-        value.AfkWarningCount = 0;
+        value.SpecMarked = false;
+        value.AfkTime = 0;
+        value.AfkMarked = false;
                 
         if(@event.Team != 1)
             value.MovedByPlugin = false;
@@ -232,10 +244,13 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             );
             
             data.SpecAfkTime = 0;
-            data.SpecWarningCount = 0;
+            data.SpecMarked = false;
             data.MovedByPlugin = false;
-            data.AntiCampWarningCount = 0;
+            data.AfkTime = 0;
+            data.AfkMarked = false;
+            data.AntiCampMarked = false;
             data.AntiCampTime = 0;
+            data.AntiCampAnchor = null;
         }, TimerFlags.STOP_ON_MAPCHANGE);
             
         return HookResult.Continue;
@@ -246,13 +261,19 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
         if (_gGameRulesProxy == null || _gGameRulesProxy.FreezePeriod || (Config.SkipWarmup && _gGameRulesProxy.WarmupPeriod))
             return;
 
-        var players = Utilities.GetPlayers().Where(x => x is { IsBot: false, Connected: PlayerConnectedState.PlayerConnected }).ToList();
+        var players = Utilities.GetPlayers().Where(x => x is { IsBot: false, Connected: PlayerConnectedState.Connected }).ToList();
         var playersCount = players.Count;
         
         foreach (var player in players)
         {
-            if (player.ControllingBot || !_gPlayerInfo.TryGetValue(player.Index, out var data))
+            if (player.ControllingBot)
                 continue;
+
+            if (!_gPlayerInfo.TryGetValue(player.Index, out var data))
+            {
+                _gPlayerInfo[player.Index] = CapturePlayerInfo(player);
+                continue;
+            }
             
             #region AFK Time
             if (player is { LifeState: (byte)LifeState_t.LIFE_ALIVE, Team: CsTeam.Terrorist or CsTeam.CounterTerrorist })
@@ -267,153 +288,123 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
                 var origin = player.PlayerPawn.Value?.CBodyComponent?.SceneNode?.AbsOrigin;
                 
                 /*  ------------------------------------------->  <-------------------------------------------  */
-                if (Config.AfkPunishAfterWarnings != 0
-                    && !(Config.AfkSkipFlag.Count >= 1 && AdminManager.PlayerHasPermissions(player, Config.AfkSkipFlag.ToArray()))
-                    && data.Angles.X == angles.X && data.Angles.Y == angles.Y
-                    && data.Origin.X == origin.X && data.Origin.Y == origin.Y)
+                var skipAfk = Config.AfkSkipFlag.Count >= 1 && AdminManager.PlayerHasPermissions(player, Config.AfkSkipFlag.ToArray());
+                var stationary = data.Angles.X == angles.X && data.Angles.Y == angles.Y
+                                 && data.Origin.X == origin.X && data.Origin.Y == origin.Y;
+                var trackingAfk = Config.AfkKickTime > 0 && !skipAfk && stationary;
+
+                if (trackingAfk)
                 {
                     data.AfkTime += Config.Timer;
-                    
-                    if (data.AfkTime < Config.AfkWarnInterval)
-                        continue;
-                    
-                    if (Config.AfkTransferC4AfterWarnings != 0 && player.TeamNum == 2 && Config.AfkTransferC4AfterWarnings == data.AfkWarningCount &&
-                        HasC4(player))
-                    {
-                        if (!Config.AfkTransferC4OnlyFromBuyZone || playerPawn.InBuyZone)
-                        {
-                            CCSPlayer_WeaponServices weaponService =
-                                new(player.PlayerPawn?.Value?.WeaponServices?.Handle ?? nint.Zero);
-                            CBasePlayerWeapon weapon =
-                                new(weaponService.MyWeapons.FirstOrDefault(w =>
-                                        w.IsValid && w.Value != null && w.Value.DesignerName == "weapon_c4")?.Value
-                                    ?.Handle ?? nint.Zero);
 
-                            if (weapon.IsValid)
+                    if (!data.AfkMarked && data.AfkTime >= Config.AfkMarkTime)
+                    {
+                        data.AfkMarked = true;
+
+                        if (Config.AfkTransferC4AfterWarnings != 0 && player.TeamNum == 2 && HasC4(player))
+                        {
+                            if (!Config.AfkTransferC4OnlyFromBuyZone || playerPawn.InBuyZone)
                             {
-                                var nearestPlayer = FindNearestPlayer(player);
-                                if (nearestPlayer != null)
+                                CCSPlayer_WeaponServices weaponService =
+                                    new(player.PlayerPawn?.Value?.WeaponServices?.Handle ?? nint.Zero);
+                                CBasePlayerWeapon weapon =
+                                    new(weaponService.MyWeapons.FirstOrDefault(w =>
+                                            w.IsValid && w.Value != null && w.Value.DesignerName == "weapon_c4")?.Value
+                                        ?.Handle ?? nint.Zero);
+
+                                if (weapon.IsValid)
                                 {
-                                    RemoveC4(weaponService, weapon);
-                                    nearestPlayer.GiveNamedItem("weapon_c4");
-                                    Server.PrintToChatAll(ReplaceVars(player,
-                                        Localizer["ChatBombTransfer"].Value
-                                            .Replace("{targetPlayerName}", nearestPlayer.PlayerName)));
+                                    var nearestPlayer = FindNearestPlayer(player);
+                                    if (nearestPlayer != null)
+                                    {
+                                        RemoveC4(weaponService, weapon);
+                                        nearestPlayer.GiveNamedItem("weapon_c4");
+                                        Server.PrintToChatAll(ReplaceVars(player,
+                                            Localizer["ChatBombTransfer"].Value
+                                                .Replace("{targetPlayerName}", nearestPlayer.PlayerName)));
+                                    }
                                 }
                             }
                         }
+
+                        player.PrintToChat(ReplaceVars(player, Localizer["ChatWarningKickMessage"].Value, Config.AfkMarkTime + Config.AfkKickTime - data.AfkTime));
+
+                        if (!string.IsNullOrEmpty(Config.PlaySoundName))
+                            player.ExecuteClientCommand($"play {Config.PlaySoundName}");
                     }
-                    
-                    if (data.AfkWarningCount == Config.AfkPunishAfterWarnings)
+                    else if (data.AfkMarked && data.AfkTime >= Config.AfkMarkTime + Config.AfkKickTime)
                     {
-                        switch (Config.AfkPunishment)
-                        {
-                            case 0:
-                                Server.PrintToChatAll(ReplaceVars(player, Localizer["ChatKillMessage"].Value));
-                                playerPawn?.CommitSuicide(false, true);
-                                
-                                break;
-                            case 1:
-                                Server.PrintToChatAll(ReplaceVars(player, Localizer["ChatMoveMessage"].Value));
-                                playerPawn?.CommitSuicide(false, true);
-                                player.ChangeTeam(CsTeam.Spectator);
-                                data.MovedByPlugin = true;
-                                
-                                break;
-                            case 2:
-                                Server.PrintToChatAll(ReplaceVars(player, Localizer["ChatKickMessage"].Value));
-                                Server.ExecuteCommand($"kickid {player.UserId}");
-                                
-                                break;
-                        }
-                        
-                        data.AfkWarningCount = 0;
+                        Server.PrintToChatAll(ReplaceVars(player, Localizer["ChatKickMessage"].Value));
+                        Server.ExecuteCommand($"kickid {player.UserId}");
+
+                        data.AfkMarked = false;
                         data.AfkTime = 0;
-                        
                         continue;
                     }
-                    
-                    switch (Config.AfkPunishment)
-                    {
-                        case 0:
-                            player.PrintToChat(ReplaceVars(player, Localizer["ChatWarningKillMessage"].Value, Config.AfkPunishAfterWarnings * Config.AfkWarnInterval - data.AfkWarningCount * Config.AfkWarnInterval));
-                        break;
-
-                        case 1:
-                            player.PrintToChat(ReplaceVars(player, Localizer["ChatWarningMoveMessage"].Value, Config.AfkPunishAfterWarnings * Config.AfkWarnInterval - data.AfkWarningCount * Config.AfkWarnInterval));
-                            break;
-
-                        case 2:
-                            player.PrintToChat(ReplaceVars(player, Localizer["ChatWarningKickMessage"].Value, Config.AfkPunishAfterWarnings * Config.AfkWarnInterval - data.AfkWarningCount * Config.AfkWarnInterval));
-                            break;
-                    }
-
-                    if (!string.IsNullOrEmpty(Config.PlaySoundName))
-                        player.ExecuteClientCommand($"play {Config.PlaySoundName}");
-                    
-                    data.AfkTime = 0;
-                    data.AfkWarningCount++;
                 }
                 else
                 {
                     data.AfkTime = 0;
-                    data.AfkWarningCount = 0;
+                    data.AfkMarked = false;
                 }
                 /*  ------------------------------------------->  <-------------------------------------------  */
-                if (data.AfkWarningCount == 0 && Config.AntiCampPunishAfterWarnings != 0
-                                           && !(Config.AntiCampSkipBombPlanted && _gGameRulesProxy.BombPlanted)
-                                           && !(Config.AntiCampSkipFlag.Count >= 1 && AdminManager.PlayerHasPermissions(player, Config.AntiCampSkipFlag.ToArray()))
-                                           && player.TeamNum != Config.AntiCampSkipTeam)
+                if (trackingAfk)
                 {
-                    if (CalculateDistance(data.Origin, origin) < Config.AntiCampRadius)
+                    data.AntiCampMarked = false;
+                    data.AntiCampTime = 0;
+                    data.AntiCampAnchor = null;
+                }
+                else if (Config.AntiCampPunishTime > 0
+                         && !(Config.AntiCampSkipBombPlanted && _gGameRulesProxy.BombPlanted)
+                         && !(Config.AntiCampSkipFlag.Count >= 1 && AdminManager.PlayerHasPermissions(player, Config.AntiCampSkipFlag.ToArray()))
+                         && player.TeamNum != Config.AntiCampSkipTeam)
+                {
+                    if (data.AntiCampAnchor == null && data.Origin != null)
+                        data.AntiCampAnchor = new Vector(data.Origin.X, data.Origin.Y, data.Origin.Z);
+
+                    if (data.AntiCampAnchor != null && origin != null && CalculateDistance(data.AntiCampAnchor, origin) < Config.AntiCampRadius)
                     {
                         data.AntiCampTime += Config.Timer;
 
-                        if (data.AntiCampTime < Config.AntiCampWarnInterval)
-                            continue;
-
-                        if (data.AntiCampWarningCount == Config.AntiCampPunishAfterWarnings)
+                        if (!data.AntiCampMarked && data.AntiCampTime >= Config.AntiCampMarkTime)
                         {
-                            switch (Config.AntiCampPunishment)
+                            data.AntiCampMarked = true;
+                            var warningKey = Config.AntiCampPunishment == 0
+                                ? "AntiCampSlayWarningMessage"
+                                : "AntiCampSlapWarningMessage";
+                            player.PrintToChat(ReplaceVars(player, Localizer[warningKey].Value, Config.AntiCampMarkTime + Config.AntiCampPunishTime - data.AntiCampTime));
+
+                            if (!string.IsNullOrEmpty(Config.PlaySoundName))
+                                player.ExecuteClientCommand($"play {Config.PlaySoundName}");
+                        }
+                        else if (data.AntiCampMarked && data.AntiCampTime >= Config.AntiCampMarkTime + Config.AntiCampPunishTime)
+                        {
+                            if (Config.AntiCampPunishment == 0)
                             {
-                                case 0:
+                                if (Config.AntiCampPunishmentAnnounce)
                                     Server.PrintToChatAll(ReplaceVars(player, Localizer["AntiCampSlayMessage"].Value));
 
-                                    playerPawn?.CommitSuicide(false, true);
-                                    break;
-                                case 1:
-                                    Server.PrintToChatAll(ReplaceVars(player, Localizer["AntiCampSlapMessage"].Value));
-                                
-                                    Slap(playerPawn, Config.AntiCampSlapDamage);
-                                    break;
+                                playerPawn?.CommitSuicide(false, true);
                             }
-                            
-                            data.AntiCampWarningCount = 0;
-                            data.AntiCampTime = 0;
+                            else
+                            {
+                                if (Config.AntiCampPunishmentAnnounce)
+                                    Server.PrintToChatAll(ReplaceVars(player, Localizer["AntiCampSlapMessage"].Value));
 
+                                Slap(playerPawn, Config.AntiCampSlapDamage);
+                            }
+
+                            data.AntiCampMarked = false;
+                            data.AntiCampTime = 0;
+                            data.AntiCampAnchor = null;
                             continue;
                         }
-
-                        switch (Config.AntiCampPunishment)
-                        {
-                            case 0:
-                                player.PrintToChat(ReplaceVars(player, Localizer["AntiCampSlayWarningMessage"].Value, Config.AntiCampPunishAfterWarnings * Config.AntiCampWarnInterval - data.AntiCampWarningCount * Config.AntiCampWarnInterval));
-                                break;
-                            case 1:
-                                player.PrintToChat(ReplaceVars(player, Localizer["AntiCampSlapWarningMessage"].Value, Config.AntiCampPunishAfterWarnings * Config.AntiCampWarnInterval - data.AntiCampWarningCount * Config.AntiCampWarnInterval));
-                                break;
-                        }
-                            
-                        if (!string.IsNullOrEmpty(Config.PlaySoundName))
-                            player.ExecuteClientCommand($"play {Config.PlaySoundName}");
-                            
-                        data.AntiCampWarningCount++;
-                        data.AntiCampTime = 0;
                     }
                     else
                     {
-                        data.AntiCampWarningCount = 0;
+                        data.AntiCampMarked = false;
                         data.AntiCampTime = 0;
+                        data.AntiCampAnchor = null;
                     }
                 }
                 
@@ -426,7 +417,7 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             #endregion
             #region SPEC Time
 
-            if (Config.SpecKickAfterWarnings != 0
+            if (Config.SpecKickTime > 0
                 && player.TeamNum == 1
                 && playersCount >= Config.SpecKickMinPlayers)
             {
@@ -435,23 +426,19 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
                 
                 data.SpecAfkTime += Config.Timer;
 
-                if (!(data.SpecAfkTime >= Config.SpecWarnInterval))
-                    continue;
-                
-                if (data.SpecWarningCount == Config.SpecKickAfterWarnings)
+                if (!data.SpecMarked && data.SpecAfkTime >= Config.SpecWarnInterval)
+                {
+                    data.SpecMarked = true;
+                    player.PrintToChat(ReplaceVars(player, Localizer["ChatWarningKickMessage"].Value, Config.SpecWarnInterval + Config.SpecKickTime - data.SpecAfkTime));
+                }
+                else if (data.SpecMarked && data.SpecAfkTime >= Config.SpecWarnInterval + Config.SpecKickTime)
                 {
                     Server.PrintToChatAll(ReplaceVars(player, Localizer["ChatKickMessage"].Value));
                     Server.ExecuteCommand($"kickid {player.UserId}");
 
-                    data.SpecWarningCount = 0;
+                    data.SpecMarked = false;
                     data.SpecAfkTime = 0;
-                    
-                    continue;
                 }
-
-                player.PrintToChat( ReplaceVars(player, Localizer["ChatWarningKickMessage"].Value, Config.SpecKickAfterWarnings * Config.SpecWarnInterval - data.SpecWarningCount * Config.SpecWarnInterval));
-                data.SpecWarningCount++;
-                data.SpecAfkTime = 0;
             }
             #endregion
         }
@@ -482,7 +469,7 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
         return Localizer["ChatPrefix"] + message.Replace("{playerName}", player.PlayerName)
                       .Replace("{teamColor}", GetTeamColor(player.Team))
                       .Replace("{weaponName}", player.PlayerPawn?.Value?.WeaponServices?.ActiveWeapon?.Value?.DesignerName ?? "Unknown")
-                      .Replace("{timeAmount}", $"{timeAmount:F1}")
+                      .Replace("{timeAmount}", $"{Math.Ceiling(timeAmount):0}")
                       .Replace("{slapAmount}", Config.AntiCampSlapDamage.ToString())
                       .Replace("{zoneName}", player.PlayerPawn?.Value?.LastPlaceName ?? "Unknown");
     }
@@ -504,7 +491,7 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
         foreach (var target in players)
         {
             var outData = _gPlayerInfo[target.Index];
-            if (target.Index == player.Index || outData.AfkWarningCount > 0)
+            if (target.Index == player.Index || outData.AfkMarked)
                 continue;
             
             var distance = CalculateDistance(player.PlayerPawn?.Value?.CBodyComponent?.SceneNode?.AbsOrigin ?? new Vector(), target.PlayerPawn?.Value?.CBodyComponent?.SceneNode?.AbsOrigin ?? new Vector());
@@ -526,6 +513,40 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
         var matchedWeapon = weaponServices.MyWeapons.FirstOrDefault(w => w.IsValid && w.Value != null && w.Value.DesignerName == "weapon_c4");
         return matchedWeapon?.IsValid == true;
     }
+
+    private void RefreshRuntimeState()
+    {
+        _gPlayerInfo.Clear();
+        RefreshGameRules();
+
+        foreach (var player in Utilities.GetPlayers())
+        {
+            if (player is not { IsBot: false, IsValid: true, Connected: PlayerConnectedState.Connected })
+                continue;
+
+            _gPlayerInfo[player.Index] = CapturePlayerInfo(player);
+        }
+    }
+
+    private void RefreshGameRules()
+    {
+        _gGameRulesProxy = Utilities.FindAllEntitiesByDesignerName<CCSGameRulesProxy>("cs_gamerules")
+            .FirstOrDefault()?.GameRules;
+    }
+
+    private static PlayerInfo CapturePlayerInfo(CCSPlayerController player)
+    {
+        var pawn = player.PlayerPawn.Value;
+        var angles = pawn?.EyeAngles;
+        var origin = pawn?.CBodyComponent?.SceneNode?.AbsOrigin;
+
+        return new PlayerInfo
+        {
+            Angles = new QAngle(angles?.X, angles?.Y, angles?.Z),
+            Origin = new Vector(origin?.X, origin?.Y, origin?.Z)
+        };
+    }
+
     private static void Slap(CBasePlayerPawn? pawn, int damage = 0)
     {
         if (pawn == null || pawn.Health <= 0)
@@ -538,7 +559,7 @@ public class AFKManager : BasePlugin, IPluginConfig<AFKManagerConfig>
             pawn.CommitSuicide(true, true);
             return;
         }
-        
+
         Random random = new();
         Vector vel = new(pawn.AbsVelocity.X, pawn.AbsVelocity.Y, pawn.AbsVelocity.Z);
 

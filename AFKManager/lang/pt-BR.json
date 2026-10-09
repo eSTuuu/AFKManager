@@ -10,5 +10,7 @@
   "AntiCampSlayMessage": "{grey}{playerName}{default} recebeu {lime}slay{default} por camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default}.",
   "AntiCampSlapMessage": "{grey}{playerName}{default} recebeu {lime}slap{default} com {red}{slapAmount} de dano{default} por camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default}.",
   "AntiCampSlayWarningMessage": "Pare de camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default} ou receberá {lime}slap{default} em {lightblue}{timeAmount}{default} segundos.",
-  "AntiCampSlapWarningMessage": "Pare de camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default} ou receberá {lime}slap{default} com {red}{slapAmount} de dano{default} em {lightblue}{timeAmount}{default} segundos."
+  "AntiCampSlapWarningMessage": "Pare de camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default} ou receberá {lime}slap{default} com {red}{slapAmount} de dano{default} em {lightblue}{timeAmount}{default} segundos.",
+  "AntiCampKickMessage": "{grey}{playerName}{default} foi {lime}expulso{default} por camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default}.",
+  "AntiCampKickWarningMessage": "Pare de camperar em {green}@{zoneName}{default} com a arma {lime}{weaponName}{default} ou será {lime}expulso{default} em {lightblue}{timeAmount}{default} segundos."
 }
